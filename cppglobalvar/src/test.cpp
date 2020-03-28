@@ -1,0 +1,3 @@
+namespace testspace {
+	int testvar;
+}
