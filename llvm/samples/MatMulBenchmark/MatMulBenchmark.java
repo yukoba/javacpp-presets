@@ -1,6 +1,7 @@
-import org.bytedeco.javacpp.BytePointer;
-import org.bytedeco.javacpp.Pointer;
-import org.bytedeco.javacpp.PointerPointer;
+import org.bytedeco.javacpp.*;
+import org.bytedeco.javacpp.annotation.Allocator;
+import org.bytedeco.javacpp.annotation.Platform;
+import org.bytedeco.javacpp.tools.Builder;
 import org.bytedeco.llvm.LLVM.*;
 
 import java.util.Random;
@@ -18,6 +19,7 @@ import static org.bytedeco.llvm.global.LLVM.*;
  * Warning: This code is slower than this.
  * clang -O3 -march=native -mllvm -polly -mllvm -polly-vectorizer=stripmine
  */
+@Platform
 public class MatMulBenchmark {
     static final int M = 2000, N = 2000, K = 2000;
     static final boolean usePolly = true;
@@ -62,6 +64,14 @@ public class MatMulBenchmark {
     }
 
     static void initialize() {
+        try {
+            Class<MatMulBenchmark> clazz = MatMulBenchmark.class;
+            new Builder().classesOrPackages(clazz.getName()).build();
+            Loader.load(clazz);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
         if (usePolly) {
             if (usePollyParallel) {
                 LLVMLoadLibraryPermanently("libgomp.so.1"); // This file name depends on your machine
@@ -88,6 +98,16 @@ public class MatMulBenchmark {
         llvmFloatPointerType = LLVMPointerType(llvmFloatType, 0);
     }
 
+    @Allocator
+    static class MatMulFunction extends FunctionPointer {
+        public MatMulFunction(Pointer p) { super(p); }
+        public MatMulFunction() { allocate(); }
+        private native void allocate();
+        public native void call(float[] a, float[] b, float[] c);
+        public native Pointer get();
+        public native MatMulFunction put(Pointer address);
+    }
+
     static void benchmarkLLVM(float[] a, float[] b, float[] c) {
         assert a.length == M * K;
         assert b.length == K * N;
@@ -100,10 +120,12 @@ public class MatMulBenchmark {
             verify(module, false);
             jitCompile(engine, module);
 
-            long fnAddr = LLVMGetFunctionAddress(engine, "matmul");
-            com.sun.jna.Function func = com.sun.jna.Function.getFunction(new com.sun.jna.Pointer(fnAddr));
+            final long fnAddr = LLVMGetFunctionAddress(engine, "matmul");
+            MatMulFunction func = new MatMulFunction().put(new Pointer() {{
+                address = fnAddr;
+            }});
             long start = System.nanoTime();
-            func.invoke(Void.class, new Object[]{a, b, c});
+            func.call(a, b, c);
             long end = System.nanoTime();
             System.out.printf("LLVM%s: %fms. c[0] = %f\n",
                     usePolly ? " with Polly" : " without Polly",
