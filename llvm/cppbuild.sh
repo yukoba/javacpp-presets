@@ -125,3 +125,4 @@ case $PLATFORM in
 esac
 
 cd ../..
+cp ../../src/cpp/*.h include/
